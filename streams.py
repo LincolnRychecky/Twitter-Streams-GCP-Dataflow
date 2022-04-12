@@ -92,9 +92,9 @@ def get_stream(set):
     for response_line in response.iter_lines():
         if response_line:
             json_response = json.loads(response_line)
-            print(json.dumps(json_response, indent=4, sort_keys=True))
-            client.publish(topic_path, data=json.dumps(json_response, indent=4, sort_keys=True).encode('utf-8'))
-
+            print(json.dumps(json_response['data'], indent=4, sort_keys=True))
+            # print(json.dumps(json_response, indent=4, sort_keys=True))
+            client.publish(topic_path, data=json.dumps(json_response['data'], indent=4, sort_keys=True).encode('utf-8'))
 
 def main():
     rules = get_rules()
