@@ -26,21 +26,6 @@ consumer_secret = "4psN3zgR0OxZH4QwXVPklE0szcSjGWazY6dczN3sTy8VYyTlzP"
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
 auth.set_access_token(access_token, access_token_secret)
 
-# Streaming Tweets
-#override tweepy.StreamListener to add logic to on_status
-class MyStreamListener(tweepy.Stream):
-    def on_status(self, status):
-        print(status.text)
-
-# Initialize Stream listener
-l = MyStreamListener(consumer_key, consumer_secret, access_token, access_token_secret)
-
-# # Create you Stream object with authentication
-# stream = tweepy.Stream(consumer_key, consumer_secret, access_token, access_token_secret)
-
-# Filter Twitter Streams to capture data by the keywords:
-l.filter(track = ['clinton', 'trump', 'sanders', 'cruz'])
-
 
 # Configure the connection
 publisher = pubsub_v1.PublisherClient()
@@ -54,14 +39,34 @@ def write_to_pubsub(data):
             # publish to the topic, don't forget to encode everything at utf8!
             publisher.publish(topic_path, data=json.dumps({
                 "text": data["text"],
-                "user_id": data["user_id"],
+                # "user_id": data["user_id"],
                 "id": data["id"],
-                "posted_at": datetime.datetime.fromtimestamp(data["created_at"]).strftime('%Y-%m-%d %H:%M:%S')
+                "hashtags": data["entities"]["hashtags"],
+                "geo": data["geo"],
+                "created_at": data["created_at"]
             }).encode("utf-8"), tweet_id=str(data["id"]).encode("utf-8"))
             
     except Exception as e:
         print(e)
         raise
+
+
+# Streaming Tweets
+#override tweepy.StreamListener to add logic to on_status
+class MyStreamListener(tweepy.Stream):
+    def on_status(self, status):
+        print(status._json)
+        write_to_pubsub(status._json)
+        
+
+# Initialize Stream listener
+l = MyStreamListener(consumer_key, consumer_secret, access_token, access_token_secret)
+
+# # Create you Stream object with authentication
+# stream = tweepy.Stream(consumer_key, consumer_secret, access_token, access_token_secret)
+
+# Filter Twitter Streams to capture data by the keywords:
+l.filter(track = ['clinton', 'trump', 'sanders', 'cruz'])
 
 
 
