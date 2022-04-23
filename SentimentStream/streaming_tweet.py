@@ -26,68 +26,51 @@ classifier = TextClassifier.load('sentiment')
 
 def estimate(messages):
 
-    # # Be able to cope with a single string as well
+    # Be able to cope with a single string as well. Load because messages from pubsub are JSON strings
     if not isinstance(messages, list):
         messages = [json.loads(messages)]
     else:
         messages = [json.loads(instance) for instance in messages]
 
-    # Messages from pubsub are JSON strings
-    # instances = list(map(lambda message: json.loads(message), messages))
-
-    # # Estimate the sentiment of the 'text' of each tweet
-    # transformedSentences = Sentence([instance["text"] for instance in instances])
-    # ([classifier.predict(sentence) for sentence in transformedSentences])
-
-    # # Join them together
-    # for i, instance in enumerate(instances):
-    #     instance['sentiment'] = transformedSentences[i].to_dict()['labels'][0]['value']
-    #     instance['sentiment_confidence'] = transformedSentences[0].to_dict()['labels'][0]['confidence']
-
-    for instance in messages:
-        instance['sentiment'] = "Negative"
-        instance['sentiment_confidence'] = 0.0
-
-    # logging.info("first message in batch")
-    # # logging.info(instances[0])
-    # logging.info(messages[0])
-    logging.info("This is what a message looks like")
-    logging.info(messages[0])
-    return messages
-
-def estimater(messages):
-    # from flair.models import TextClassifier
-    # from flair.data import Sentence
-    # classifier = TextClassifier.load('sentiment')
-
-    # # Be able to cope with a single string as well
-    if not isinstance(messages, list):
-        messages = [json.loads(messages)]
-    else:
-        messages = [json.loads(instance) for instance in messages]
-
-    # Messages from pubsub are JSON strings
-    # instances = list(map(lambda message: json.loads(message), messages))
-
-    # # Estimate the sentiment of the 'text' of each tweet
-    transformedSentences = Sentence([instance["text"] for instance in messages])
+    # Estimate the sentiment of the 'text' of each tweet
+    transformedSentences = [Sentence(instance['text']) for instance in messages]
     ([classifier.predict(sentence) for sentence in transformedSentences])
 
-    # # Join them together
+    # Join them together
     for i, instance in enumerate(messages):
         instance['sentiment'] = transformedSentences[i].to_dict()['labels'][0]['value']
         instance['sentiment_confidence'] = transformedSentences[0].to_dict()['labels'][0]['confidence']
 
-    # for instance in messages:
-    #     instance['sentiment'] = "Negative"
-    #     instance['sentiment_confidence'] = 0.0
-
-    # logging.info("first message in batch")
-    # # logging.info(instances[0])
-    # logging.info(messages[0])
-    # logging.info("This is what a message looks like")
-    logging.info(len(messages), " processed")
+    logging.info(str(len(messages)) + " -processed in sentiment batch")
     return messages
+
+def estimater(messages):
+
+    # Be able to cope with a single string as well
+    if not isinstance(messages, list):
+        messages = [json.loads(messages)]
+    else:
+        messages = [json.loads(instance) for instance in messages]
+
+    logging.info(str(len(messages)) + " -processed in raw tweet batch")
+    return messages
+
+def aggregate_format(key_values):
+    # Aggregate tweets per 30 second window
+    (key, values) = key_values
+    logging.info("here are the key_values")
+    logging.info(key_values)
+
+    mean_sentiment = np.mean([(x['sentiment_confidence'] * (-1 if x['sentiment'] == 'NEGATIVE' else 1)) for x in values])
+    mean_timestamp = datetime.datetime.utcfromtimestamp(np.mean([
+        (datetime.datetime.strptime(x["created_at"], '%Y-%m-%d %H:%M:%S')- datetime.datetime.fromtimestamp(
+            0)).total_seconds() for x in values
+    ]))
+
+    logging.info("mean sentiment" + str(mean_sentiment) + " | mean timestamp" + str(mean_timestamp))
+
+    # Return in correct format, according to BQ schema
+    return {"created_at": mean_timestamp.strftime('%Y-%m-%d %H:%M:%S'), "sentiment_confidence": float(mean_sentiment)}
 
 class TopicOptions(PipelineOptions):
     @classmethod
@@ -109,6 +92,8 @@ def run(argv=None):
                           '{"name":"user_id","type":"STRING"},' \
                           '{"name":"verified","type":"BOOLEAN"},' \
                           '{"name":"location","type":"STRING"},' \
+                          '{"name":"favorite_count","type":"INTEGER"},' \
+                          '{"name":"retweet_count","type":"INTEGER"},' \
                           '{"name":"created_at","type":"DATETIME"},' \
                           '{"name":"sentiment","type":"STRING"},' \
                           '{"name":"sentiment_confidence","type":"FLOAT"}' \
@@ -120,10 +105,18 @@ def run(argv=None):
                           '{"name":"tweet_id","type":"STRING"},' \
                           '{"name":"user_id","type":"STRING"},' \
                           '{"name":"verified","type":"BOOLEAN"},' \
+                          '{"name":"favorite_count","type":"INTEGER"},' \
+                          '{"name":"retweet_count","type":"INTEGER"},' \
                           '{"name":"location","type":"STRING"},' \
                           '{"name":"created_at","type":"DATETIME"}' \
                           ']}'
     bigqueryschemaraw = parse_table_schema_from_json(bigqueryschema_raw_json)
+
+    bigqueryschema_mean_json = '{"fields": [' \
+                            '{"name":"created_at","type":"DATETIME"},' \
+                            '{"name":"sentiment_confidence","type":"FLOAT"}' \
+                             ']}'
+    bigqueryschema_mean = parse_table_schema_from_json(bigqueryschema_mean_json)
 
     """Build and run the pipeline."""
 
@@ -134,12 +127,6 @@ def run(argv=None):
     pipeline_options.view_as(StandardOptions).streaming = True
     # Run on Cloud Dataflow by default
     pipeline_options.view_as(StandardOptions).runner = 'DirectRunner'
-
-    # google_cloud_options = pipeline_options.view_as(GoogleCloudOptions)
-    # google_cloud_options.project = 'twitter-streams-345620'
-    # google_cloud_options.staging_location = 'gs://twitterstreams_dataflow_bucket/staging/staging'
-    # google_cloud_options.temp_location = 'gs://twitterstreams_dataflow_bucket/temp'
-    # google_cloud_options.region = 'us-central1'
 
     p = beam.Pipeline(options=pipeline_options)
 
@@ -155,13 +142,12 @@ def run(argv=None):
 
     # Window them, and batch them into batches of 50 (not too large)
     inbound_tweets = (lines
-                     | 'assign window key' >> beam.WindowInto(window.FixedWindows(10))
+                     | 'assign window key' >> beam.WindowInto(window.FixedWindows(30))
                      | 'batch into n batches' >> BatchElements(min_batch_size=49, max_batch_size=50)
-                     #| 'exract features of tweets' >> beam.FlatMap(lambda messages: estimater(messages))
                      )
 
     raw_tweets = (inbound_tweets
-                 | 'exract features of tweets' >> beam.FlatMap(lambda messages: estimater(messages))
+                 | 'extract features of tweets' >> beam.FlatMap(lambda messages: estimater(messages))
                  )
 
     # Write to Bigquery
@@ -174,8 +160,14 @@ def run(argv=None):
         project="twitter-streams-345620"
     )
 
-    (inbound_tweets
-        | 'predict sentiment' >> beam.FlatMap(lambda messages: estimate(messages))
+    sentiment_analyzed_tweets = (inbound_tweets
+                                    | 'predict sentiment' >> beam.FlatMap(lambda messages: estimate(messages))
+                                )
+
+
+    # Analyze sentiment ['Positive', 'Negative'] & sentiment confidence -1 <= x <= 1
+    (sentiment_analyzed_tweets
+        #| 'predict sentiment' >> beam.FlatMap(lambda messages: estimate(messages))
         | 'store sentiment analyzed twitter posts' >> beam.io.WriteToBigQuery(
             table="all_tweets_sentiment",
             dataset="twitter_dataset",
@@ -186,9 +178,21 @@ def run(argv=None):
         )
     )
 
+    # Average out and log the mean value for every 30 second interval
+    (sentiment_analyzed_tweets
+     | 'pair with key' >> beam.Map(lambda x: (1, x))
+     | 'group by key' >> beam.GroupByKey()
+     | 'aggregate and format' >> beam.Map(aggregate_format)
+     | 'store aggregated sentiment' >> beam.io.WriteToBigQuery(
+                table="average_tweets_sentiment",
+                dataset="twitter_dataset",
+                schema=bigqueryschema_mean,
+                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+                create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+                project="twitter-streams-345620"))
+
     result = p.run()
     result.wait_until_finish()
-
 
 if __name__ == '__main__':
     logging.getLogger().setLevel(logging.INFO)
