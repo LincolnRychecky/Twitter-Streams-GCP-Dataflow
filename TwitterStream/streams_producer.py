@@ -9,18 +9,19 @@ import tweepy
 # # bearer_token = os.environ.get("BEARER_TOKEN")
 bearer_token = "AAAAAAAAAAAAAAAAAAAAAMaMawEAAAAALMK3JQ0J05eVatForvOL83Vqet8%3D3K0R9TqHsIpMuFOU1JRC9VeStnPOaqVkj9zXiiBpzUsGK7Yxau"
 
-credentials_path = '/Users/lincolnrychecky/Desktop/Twitter-Streams/twitter-streams-345620-910278d14e83.json'
+# Set path to service accoount credentials
+credentials_path = ''
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
 
-# # connect to Google Cloud Pub/Sub exchange
+# Connect to Google Cloud Pub/Sub exchange
 client = pubsub_v1.PublisherClient()
 topic_path = client.topic_path("twitter-streams-345620", "twitterstream")
 
-# Store OAuth authentication credentials in relevant variables
-access_token = "1250474930178670593-6X1ienbYpdlrf8l9TgAGL21aXHtK5q"
-access_token_secret = "2UGfIQgCyJmp4gf7VZncs7mrIrGqu2WHpiQNANpbTRfP6"
-consumer_key = "M2n1GHsbBLnQcUWsK49C1bs1k"
-consumer_secret = "4psN3zgR0OxZH4QwXVPklE0szcSjGWazY6dczN3sTy8VYyTlzP"
+# Store Twitter API OAuth authentication credentials in relevant variables
+access_token = ""
+access_token_secret = ""
+consumer_key = ""
+consumer_secret = ""
 
 # Pass OAuth details to tweepy's OAuth handler
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
